@@ -1,0 +1,287 @@
+# StatefulSet 範例
+# 用於有狀態應用，提供穩定的網路身份和持久化儲存
+# 每個 Pod 都有唯一且穩定的名稱、網路標識和儲存
+
+---
+# 基本 StatefulSet 範例
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-stateful-service
+  labels:
+    app: nginx-stateful
+spec:
+  # Headless Service：不分配 ClusterIP
+  clusterIP: None
+  selector:
+    app: nginx-stateful
+  ports:
+  - name: http
+    port: 80
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nginx-stateful
+  labels:
+    app: nginx-stateful
+spec:
+  # 關聯的 Headless Service
+  serviceName: nginx-stateful-service
+  
+  # 副本數量
+  replicas: 3
+  
+  selector:
+    matchLabels:
+      app: nginx-stateful
+  
+  # Pod 模板
+  template:
+    metadata:
+      labels:
+        app: nginx-stateful
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+          name: http
+        
+        # 掛載持久化儲存
+        volumeMounts:
+        - name: www
+          mountPath: /usr/share/nginx/html
+        
+        # 初始化內容
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - echo "Hello from $(hostname)" > /usr/share/nginx/html/index.html
+  
+  # 持久化儲存聲明模板
+  volumeClaimTemplates:
+  - metadata:
+      name: www
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+
+---
+# 模擬資料庫叢集的 StatefulSet
+# 展示穩定的網路身份和有序部署/縮放
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-cluster
+  labels:
+    app: mysql
+spec:
+  clusterIP: None
+  selector:
+    app: mysql
+  ports:
+  - name: mysql
+    port: 3306
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  labels:
+    app: mysql
+spec:
+  serviceName: mysql-cluster
+  replicas: 3
+  
+  selector:
+    matchLabels:
+      app: mysql
+  
+  # Pod 管理策略
+  podManagementPolicy: OrderedReady  # 有序部署（預設）
+  # podManagementPolicy: Parallel    # 並行部署
+  
+  # 更新策略
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0  # 從第幾個 Pod 開始更新
+  
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      initContainers:
+      # 初始化容器：設定伺服器 ID
+      - name: init-mysql
+        image: busybox
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -ex
+          # 從 Pod 名稱獲取序號
+          [[ $(hostname) =~ -([0-9]+)$ ]] || exit 1
+          ordinal=${BASH_REMATCH[1]}
+          echo "Server ID: $((100 + $ordinal))"
+          echo "[mysqld]" > /mnt/conf.d/server-id.cnf
+          echo "server-id=$((100 + $ordinal))" >> /mnt/conf.d/server-id.cnf
+        
+        volumeMounts:
+        - name: conf
+          mountPath: /mnt/conf.d
+      
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: "demo-password"  # 生產環境應使用 Secret
+        - name: MYSQL_DATABASE
+          value: "demo_db"
+        
+        ports:
+        - name: mysql
+          containerPort: 3306
+        
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/mysql
+        - name: conf
+          mountPath: /etc/mysql/conf.d
+        
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - mysqladmin ping -u root -p${MYSQL_ROOT_PASSWORD}
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - mysql -u root -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      
+      volumes:
+      - name: conf
+        emptyDir: {}
+  
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 5Gi
+
+---
+# 簡化的 Redis 叢集 StatefulSet
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+data:
+  redis.conf: |
+    appendonly yes
+    appendfilename "appendonly.aof"
+    dir /data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster
+  labels:
+    app: redis
+spec:
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+  - name: redis
+    port: 6379
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  labels:
+    app: redis
+spec:
+  serviceName: redis-cluster
+  replicas: 3
+  
+  selector:
+    matchLabels:
+      app: redis
+  
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command:
+        - redis-server
+        - /etc/redis/redis.conf
+        
+        ports:
+        - name: redis
+          containerPort: 6379
+        
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: config
+          mountPath: /etc/redis
+        
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
+      
+      volumes:
+      - name: config
+        configMap:
+          name: redis-config
+  
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 2Gi

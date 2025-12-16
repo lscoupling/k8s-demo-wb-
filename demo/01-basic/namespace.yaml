@@ -1,0 +1,84 @@
+# Namespace 範例
+# Namespace 用於邏輯隔離叢集資源
+
+---
+# 基本 Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8s-demo
+  labels:
+    environment: demo
+    purpose: learning
+
+---
+# 帶資源配額的 Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8s-demo-limited
+  labels:
+    environment: demo
+    purpose: learning
+    
+---
+# ResourceQuota - 限制 Namespace 的資源使用
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: demo-quota
+  namespace: k8s-demo-limited
+spec:
+  hard:
+    # 限制 CPU 和記憶體總量
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    
+    # 限制物件數量
+    pods: "10"
+    services: "5"
+    persistentvolumeclaims: "3"
+    configmaps: "10"
+    secrets: "10"
+
+---
+# LimitRange - 設定資源的預設值和限制範圍
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: demo-limitrange
+  namespace: k8s-demo-limited
+spec:
+  limits:
+  # Container 級別的限制
+  - type: Container
+    default:
+      cpu: 200m
+      memory: 256Mi
+    defaultRequest:
+      cpu: 100m
+      memory: 128Mi
+    max:
+      cpu: 1
+      memory: 1Gi
+    min:
+      cpu: 50m
+      memory: 64Mi
+  
+  # Pod 級別的限制
+  - type: Pod
+    max:
+      cpu: 2
+      memory: 2Gi
+    min:
+      cpu: 100m
+      memory: 128Mi
+  
+  # PersistentVolumeClaim 級別的限制
+  - type: PersistentVolumeClaim
+    max:
+      storage: 10Gi
+    min:
+      storage: 1Gi

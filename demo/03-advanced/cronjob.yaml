@@ -1,0 +1,283 @@
+# CronJob 範例
+# 按照 Cron 表達式定時執行任務
+# 類似 Linux 的 crontab
+
+---
+# 基本 CronJob 範例
+# 每分鐘執行一次
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: simple-cronjob
+  labels:
+    app: cronjob-demo
+spec:
+  # Cron 表達式：分 時 日 月 星期
+  # */1 * * * * = 每分鐘
+  schedule: "*/1 * * * *"
+  
+  # 時區（需要 K8S 1.27+）
+  # timeZone: "Asia/Taipei"
+  
+  # 並發策略
+  concurrencyPolicy: Allow  # Allow, Forbid, Replace
+  
+  # 啟動任務的截止時間（秒）
+  startingDeadlineSeconds: 60
+  
+  # 保留成功任務的歷史記錄數量
+  successfulJobsHistoryLimit: 3
+  
+  # 保留失敗任務的歷史記錄數量
+  failedJobsHistoryLimit: 1
+  
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: cronjob-demo
+        spec:
+          restartPolicy: OnFailure
+          
+          containers:
+          - name: worker
+            image: busybox
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "CronJob 執行時間: $(date)"
+              echo "執行簡單任務..."
+              sleep 5
+              echo "任務完成！"
+            
+            resources:
+              requests:
+                memory: "16Mi"
+                cpu: "25m"
+              limits:
+                memory: "32Mi"
+                cpu: "50m"
+
+---
+# 每日備份 CronJob
+# 每天凌晨 2 點執行
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: daily-backup
+  labels:
+    app: backup
+    type: daily
+spec:
+  # 每天 02:00 執行
+  schedule: "0 2 * * *"
+  
+  concurrencyPolicy: Forbid  # 禁止並發執行
+  
+  successfulJobsHistoryLimit: 7   # 保留 7 天的成功記錄
+  failedJobsHistoryLimit: 3       # 保留 3 天的失敗記錄
+  
+  jobTemplate:
+    spec:
+      # 任務超時時間：1 小時
+      activeDeadlineSeconds: 3600
+      
+      template:
+        metadata:
+          labels:
+            app: backup
+        spec:
+          restartPolicy: OnFailure
+          
+          containers:
+          - name: backup
+            image: busybox
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "========================================="
+              echo "每日備份任務開始"
+              echo "執行時間: $(date)"
+              echo "========================================="
+              
+              BACKUP_FILE="backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+              echo "備份檔案名稱: $BACKUP_FILE"
+              
+              echo "步驟 1: 準備備份..."
+              sleep 3
+              
+              echo "步驟 2: 壓縮資料..."
+              sleep 5
+              
+              echo "步驟 3: 上傳到儲存..."
+              sleep 4
+              
+              echo "步驟 4: 驗證備份..."
+              sleep 2
+              
+              echo "========================================="
+              echo "備份完成！"
+              echo "備份大小: $((RANDOM % 1000 + 100)) MB"
+              echo "========================================="
+
+---
+# 每小時清理任務
+# 每小時的第 15 分執行
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hourly-cleanup
+  labels:
+    app: cleanup
+    type: hourly
+spec:
+  # 每小時的第 15 分執行
+  schedule: "15 * * * *"
+  
+  concurrencyPolicy: Replace  # 如果上次任務未完成，取消並啟動新任務
+  
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          
+          containers:
+          - name: cleanup
+            image: busybox
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "清理任務開始: $(date)"
+              
+              echo "刪除臨時檔案..."
+              sleep 3
+              
+              echo "清理快取..."
+              sleep 2
+              
+              echo "清理完成！"
+
+---
+# 每週報告 CronJob
+# 每週一早上 9 點執行
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: weekly-report
+  labels:
+    app: reporting
+    type: weekly
+spec:
+  # 每週一 09:00 執行
+  schedule: "0 9 * * 1"
+  
+  concurrencyPolicy: Forbid
+  
+  successfulJobsHistoryLimit: 4
+  failedJobsHistoryLimit: 2
+  
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          
+          containers:
+          - name: reporter
+            image: busybox
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "========================================="
+              echo "週報產生器"
+              echo "執行時間: $(date)"
+              echo "========================================="
+              
+              WEEK_NUM=$(date +%V)
+              echo "產生第 $WEEK_NUM 週的報告..."
+              
+              echo "收集統計資料..."
+              sleep 4
+              
+              echo "生成圖表..."
+              sleep 3
+              
+              echo "發送郵件通知..."
+              sleep 2
+              
+              echo "週報產生完成！"
+              echo "========================================="
+
+---
+# 監控檢查 CronJob
+# 每 5 分鐘執行一次
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: health-check
+  labels:
+    app: monitoring
+    type: health-check
+spec:
+  # 每 5 分鐘執行
+  schedule: "*/5 * * * *"
+  
+  concurrencyPolicy: Forbid
+  
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          
+          containers:
+          - name: health-checker
+            image: busybox
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "[$(date)] 執行健康檢查..."
+              
+              # 模擬檢查各項服務
+              SERVICES="api database cache queue"
+              
+              for service in $SERVICES; do
+                echo "檢查 $service 服務..."
+                # 模擬檢查結果（70% 成功率）
+                if [ $((RANDOM % 10)) -lt 7 ]; then
+                  echo "  ✓ $service 正常"
+                else
+                  echo "  ✗ $service 異常"
+                fi
+                sleep 1
+              done
+              
+              echo "[$(date)] 健康檢查完成"
+
+---
+# Cron 表達式參考
+# ┌───────────── 分鐘 (0 - 59)
+# │ ┌───────────── 小時 (0 - 23)
+# │ │ ┌───────────── 日期 (1 - 31)
+# │ │ │ ┌───────────── 月份 (1 - 12)
+# │ │ │ │ ┌───────────── 星期 (0 - 6) (週日到週六；某些系統中 7 也是週日)
+# │ │ │ │ │
+# * * * * *
+#
+# 範例：
+# */5 * * * *      - 每 5 分鐘
+# 0 */2 * * *      - 每 2 小時
+# 0 0 * * *        - 每天午夜
+# 0 0 * * 0        - 每週日午夜
+# 0 0 1 * *        - 每月 1 號午夜
+# 0 9-17 * * 1-5   - 工作日的 9:00 到 17:00 每小時

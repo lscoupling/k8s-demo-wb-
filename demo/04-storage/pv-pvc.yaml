@@ -1,0 +1,261 @@
+# PersistentVolume (PV) 和 PersistentVolumeClaim (PVC) 範例
+# PV：叢集管理員預先配置的儲存資源
+# PVC：使用者請求儲存的方式
+
+---
+# PersistentVolume - 本地儲存
+# 注意：本地儲存僅適用於測試，生產環境建議使用網路儲存
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-pv-1
+  labels:
+    type: local
+    environment: demo
+spec:
+  # 儲存容量
+  capacity:
+    storage: 5Gi
+  
+  # 訪問模式
+  # ReadWriteOnce (RWO) - 單節點讀寫
+  # ReadOnlyMany (ROX) - 多節點唯讀
+  # ReadWriteMany (RWX) - 多節點讀寫
+  accessModes:
+    - ReadWriteOnce
+  
+  # 回收策略
+  # Retain - 保留資料，需手動清理
+  # Recycle - 清空資料後重新使用（已廢棄）
+  # Delete - 刪除 PVC 時自動刪除 PV 和底層儲存
+  persistentVolumeReclaimPolicy: Retain
+  
+  # StorageClass 名稱
+  storageClassName: local-storage
+  
+  # 本地路徑
+  hostPath:
+    path: /mnt/data/pv1
+    type: DirectoryOrCreate
+
+---
+# 第二個 PersistentVolume
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-pv-2
+  labels:
+    type: local
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  hostPath:
+    path: /mnt/data/pv2
+    type: DirectoryOrCreate
+
+---
+# 第三個 PersistentVolume - 支援多節點讀寫
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nfs-pv
+  labels:
+    type: nfs
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteMany  # 多節點讀寫
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nfs-storage
+  # NFS 配置（需要有 NFS 伺服器）
+  nfs:
+    server: nfs-server.example.com
+    path: /exports/data
+
+---
+# PersistentVolumeClaim - 請求 5Gi 儲存
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-pvc
+  labels:
+    app: demo
+spec:
+  # 訪問模式必須與 PV 匹配
+  accessModes:
+    - ReadWriteOnce
+  
+  # StorageClass 名稱
+  storageClassName: local-storage
+  
+  # 請求的儲存資源
+  resources:
+    requests:
+      storage: 5Gi
+  
+  # 可選：選擇器，用於篩選特定的 PV
+  # selector:
+  #   matchLabels:
+  #     type: local
+
+---
+# 使用 PVC 的 Pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-with-pvc
+  labels:
+    app: storage-demo
+spec:
+  containers:
+  - name: app
+    image: nginx:1.21
+    ports:
+    - containerPort: 80
+    
+    # 掛載 PVC
+    volumeMounts:
+    - name: storage
+      mountPath: /usr/share/nginx/html
+    
+    # 初始化資料
+    lifecycle:
+      postStart:
+        exec:
+          command:
+          - /bin/sh
+          - -c
+          - |
+            echo "<h1>Hello from Persistent Storage!</h1>" > /usr/share/nginx/html/index.html
+            echo "<p>Pod: $(hostname)</p>" >> /usr/share/nginx/html/index.html
+            echo "<p>Time: $(date)</p>" >> /usr/share/nginx/html/index.html
+  
+  volumes:
+  - name: storage
+    persistentVolumeClaim:
+      claimName: my-pvc
+
+---
+# 使用 PVC 的 Deployment
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: webapp-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-storage
+  resources:
+    requests:
+      storage: 3Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-with-pvc
+  labels:
+    app: webapp
+spec:
+  replicas: 1  # 使用 RWO 時，replicas 通常為 1
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        
+        volumeMounts:
+        - name: webapp-storage
+          mountPath: /usr/share/nginx/html
+        - name: logs
+          mountPath: /var/log/nginx
+      
+      volumes:
+      - name: webapp-storage
+        persistentVolumeClaim:
+          claimName: webapp-pvc
+      - name: logs
+        persistentVolumeClaim:
+          claimName: logs-pvc
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: logs-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-storage
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+# 多容器共享 PVC
+apiVersion: v1
+kind: Pod
+metadata:
+  name: shared-storage-pod
+  labels:
+    app: shared-demo
+spec:
+  containers:
+  # Writer 容器：寫入資料
+  - name: writer
+    image: busybox
+    command:
+    - /bin/sh
+    - -c
+    - |
+      while true; do
+        echo "$(date): Message from writer" >> /data/shared.log
+        sleep 5
+      done
+    volumeMounts:
+    - name: shared-data
+      mountPath: /data
+  
+  # Reader 容器：讀取資料
+  - name: reader
+    image: busybox
+    command:
+    - /bin/sh
+    - -c
+    - |
+      sleep 5
+      tail -f /data/shared.log
+    volumeMounts:
+    - name: shared-data
+      mountPath: /data
+  
+  volumes:
+  - name: shared-data
+    persistentVolumeClaim:
+      claimName: shared-pvc
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-storage
+  resources:
+    requests:
+      storage: 1Gi

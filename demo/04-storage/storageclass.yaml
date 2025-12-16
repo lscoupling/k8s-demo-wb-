@@ -1,0 +1,254 @@
+# StorageClass 範例
+# 動態供應 PV 的模板
+# 當 PVC 請求儲存時，自動創建 PV
+
+---
+# 本地儲存的 StorageClass
+# 使用 hostPath provisioner（僅供測試）
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-storage
+  labels:
+    storage-type: local
+# 沒有 provisioner，需要手動創建 PV
+provisioner: kubernetes.io/no-provisioner
+# 卷綁定模式
+volumeBindingMode: WaitForFirstConsumer
+# 是否允許擴展
+allowVolumeExpansion: false
+
+---
+# AWS EBS StorageClass 範例（用於 EKS）
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: aws-ebs-gp3
+  annotations:
+    # 設為預設 StorageClass
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3              # EBS 卷類型：gp2, gp3, io1, io2, st1, sc1
+  fsType: ext4           # 檔案系統類型
+  encrypted: "true"      # 啟用加密
+  # iops: "3000"         # IOPS（僅適用於 gp3, io1, io2）
+  # throughput: "125"    # 吞吐量 MB/s（僅適用於 gp3）
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# AWS EBS StorageClass - IO 優化版本
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: aws-ebs-io-optimized
+provisioner: ebs.csi.aws.com
+parameters:
+  type: io2
+  iops: "10000"
+  encrypted: "true"
+  fsType: ext4
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# AWS EFS StorageClass 範例（支援多節點讀寫）
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: aws-efs
+provisioner: efs.csi.aws.com
+parameters:
+  provisioningMode: efs-ap
+  fileSystemId: fs-xxxxxxxx    # 需要替換為實際的 EFS ID
+  directoryPerms: "700"
+  gidRangeStart: "1000"
+  gidRangeEnd: "2000"
+volumeBindingMode: Immediate
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+
+---
+# Google Cloud Persistent Disk StorageClass（用於 GKE）
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gcp-standard-pd
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-standard       # pd-standard, pd-balanced, pd-ssd
+  replication-type: none  # none, regional-pd
+  fstype: ext4
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Azure Disk StorageClass（用於 AKS）
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: azure-disk-premium
+provisioner: disk.csi.azure.com
+parameters:
+  storageaccounttype: Premium_LRS  # Standard_LRS, Premium_LRS, StandardSSD_LRS
+  kind: Managed                    # Managed, Dedicated
+  fsType: ext4
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# NFS StorageClass 範例
+# 需要先安裝 NFS provisioner
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs-storage
+provisioner: example.com/nfs  # 替換為實際的 provisioner
+parameters:
+  server: nfs-server.example.com
+  path: /exports
+  readOnly: "false"
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+
+---
+# 使用 StorageClass 的 PVC（動態供應）
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dynamic-pvc
+  labels:
+    app: dynamic-demo
+spec:
+  # 指定 StorageClass
+  storageClassName: aws-ebs-gp3
+  
+  accessModes:
+    - ReadWriteOnce
+  
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# 使用動態供應 PVC 的 Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-with-dynamic-storage
+  labels:
+    app: dynamic-storage-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dynamic-storage-demo
+  template:
+    metadata:
+      labels:
+        app: dynamic-storage-demo
+    spec:
+      containers:
+      - name: app
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        
+        # 寫入測試資料
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                echo "Deployed at: $(date)" > /data/deployment-info.txt
+                echo "Hostname: $(hostname)" >> /data/deployment-info.txt
+      
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: dynamic-pvc
+
+---
+# 實戰範例：使用不同 StorageClass 的多層儲存
+# 高效能儲存（資料庫）
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: database-pvc
+  labels:
+    app: database
+    tier: high-performance
+spec:
+  storageClassName: aws-ebs-io-optimized  # IO 優化儲存
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# 標準儲存（應用程式）
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: application-pvc
+  labels:
+    app: application
+    tier: standard
+spec:
+  storageClassName: aws-ebs-gp3  # 標準 GP3 儲存
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+# 共享儲存（檔案上傳）
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uploads-pvc
+  labels:
+    app: uploads
+    tier: shared
+spec:
+  storageClassName: aws-efs  # EFS 共享儲存
+  accessModes:
+    - ReadWriteMany  # 多節點讀寫
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# 儲存擴展範例
+# 1. 首先創建一個較小的 PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: expandable-pvc
+spec:
+  storageClassName: aws-ebs-gp3  # 必須支援 allowVolumeExpansion
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+# 2. 擴展儲存（修改 PVC 的 storage 值）
+# kubectl patch pvc expandable-pvc -p '{"spec":{"resources":{"requests":{"storage":"10Gi"}}}}'
+
+# 3. 或使用 kubectl edit pvc expandable-pvc
+# 將 storage: 5Gi 改為 storage: 10Gi

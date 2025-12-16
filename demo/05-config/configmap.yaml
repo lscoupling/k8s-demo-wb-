@@ -1,0 +1,334 @@
+# ConfigMap 範例
+# 用於儲存非敏感的配置資料
+
+---
+# 基本 ConfigMap - 從文字資料創建
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  labels:
+    app: demo
+data:
+  # 簡單的鍵值對
+  APP_NAME: "K8S Demo Application"
+  APP_VERSION: "1.0.0"
+  LOG_LEVEL: "info"
+  MAX_CONNECTIONS: "100"
+  ENVIRONMENT: "development"
+  
+  # 多行配置檔案
+  app.properties: |
+    # Application Properties
+    app.name=K8S Demo
+    app.version=1.0.0
+    app.port=8080
+    app.context-path=/api
+    
+    # Database Configuration
+    db.host=localhost
+    db.port=5432
+    db.name=demo_db
+    
+    # Logging
+    log.level=info
+    log.format=json
+
+---
+# ConfigMap - 配置檔案範例
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  labels:
+    app: nginx
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid /var/run/nginx.pid;
+    
+    events {
+        worker_connections 1024;
+    }
+    
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+        
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for"';
+        
+        access_log /var/log/nginx/access.log main;
+        
+        sendfile on;
+        keepalive_timeout 65;
+        
+        server {
+            listen 80;
+            server_name localhost;
+            
+            location / {
+                root /usr/share/nginx/html;
+                index index.html;
+            }
+            
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+            }
+        }
+    }
+
+---
+# 使用 ConfigMap 的 Pod - 環境變數方式
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-with-configmap-env
+  labels:
+    app: config-demo
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command:
+    - /bin/sh
+    - -c
+    - |
+      echo "==================================="
+      echo "Application Configuration"
+      echo "==================================="
+      echo "App Name: $APP_NAME"
+      echo "App Version: $APP_VERSION"
+      echo "Log Level: $LOG_LEVEL"
+      echo "Environment: $ENVIRONMENT"
+      echo "==================================="
+      sleep 3600
+    
+    # 從 ConfigMap 注入環境變數
+    env:
+    # 單個環境變數
+    - name: APP_NAME
+      valueFrom:
+        configMapKeyRef:
+          name: app-config
+          key: APP_NAME
+    
+    - name: APP_VERSION
+      valueFrom:
+        configMapKeyRef:
+          name: app-config
+          key: APP_VERSION
+    
+    - name: LOG_LEVEL
+      valueFrom:
+        configMapKeyRef:
+          name: app-config
+          key: LOG_LEVEL
+    
+    # 從 ConfigMap 導入所有環境變數
+    envFrom:
+    - configMapRef:
+        name: app-config
+
+---
+# 使用 ConfigMap 的 Pod - 檔案掛載方式
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-with-configmap-volume
+  labels:
+    app: config-demo
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command:
+    - /bin/sh
+    - -c
+    - |
+      echo "Configuration files:"
+      ls -la /etc/config/
+      echo ""
+      echo "Content of app.properties:"
+      cat /etc/config/app.properties
+      echo ""
+      sleep 3600
+    
+    # 將 ConfigMap 掛載為檔案
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/config
+  
+  volumes:
+  - name: config-volume
+    configMap:
+      name: app-config
+      # 可選：只掛載特定的 key
+      items:
+      - key: app.properties
+        path: app.properties
+
+---
+# Nginx with ConfigMap
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-with-config
+  labels:
+    app: nginx-demo
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.21
+    ports:
+    - containerPort: 80
+    
+    # 掛載自訂的 nginx.conf
+    volumeMounts:
+    - name: nginx-config-volume
+      mountPath: /etc/nginx/nginx.conf
+      subPath: nginx.conf  # 只掛載單一檔案，不覆蓋整個目錄
+  
+  volumes:
+  - name: nginx-config-volume
+    configMap:
+      name: nginx-config
+
+---
+# ConfigMap - JSON 和 YAML 格式
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: structured-config
+data:
+  # JSON 配置
+  config.json: |
+    {
+      "server": {
+        "host": "0.0.0.0",
+        "port": 8080,
+        "ssl": false
+      },
+      "database": {
+        "host": "postgres",
+        "port": 5432,
+        "name": "appdb",
+        "pool_size": 20
+      },
+      "cache": {
+        "enabled": true,
+        "ttl": 3600,
+        "redis": {
+          "host": "redis",
+          "port": 6379
+        }
+      }
+    }
+  
+  # YAML 配置
+  config.yaml: |
+    server:
+      host: 0.0.0.0
+      port: 8080
+      ssl: false
+    
+    database:
+      host: postgres
+      port: 5432
+      name: appdb
+      pool_size: 20
+    
+    cache:
+      enabled: true
+      ttl: 3600
+      redis:
+        host: redis
+        port: 6379
+
+---
+# Deployment 使用 ConfigMap
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-with-configmap
+  labels:
+    app: webapp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        
+        # 環境變數
+        envFrom:
+        - configMapRef:
+            name: app-config
+        
+        # 掛載配置檔案
+        volumeMounts:
+        - name: config
+          mountPath: /etc/config
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+      
+      volumes:
+      - name: config
+        configMap:
+          name: structured-config
+      - name: nginx-config
+        configMap:
+          name: nginx-config
+
+---
+# ConfigMap - 特定權限
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-with-permissions
+data:
+  script.sh: |
+    #!/bin/bash
+    echo "Running custom script..."
+    echo "Current time: $(date)"
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-with-executable-config
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command:
+    - /bin/sh
+    - -c
+    - |
+      chmod +x /scripts/script.sh
+      /scripts/script.sh
+      sleep 3600
+    
+    volumeMounts:
+    - name: scripts
+      mountPath: /scripts
+  
+  volumes:
+  - name: scripts
+    configMap:
+      name: config-with-permissions
+      defaultMode: 0755  # 設定檔案權限

@@ -1,0 +1,191 @@
+# Startup Probe（啟動探針）範例
+# 用於檢測容器內的應用程式是否已啟動
+# Startup Probe 成功前，Liveness 和 Readiness Probe 會被禁用
+
+---
+# 基本 Startup Probe 範例
+# 適用於啟動慢的應用程式
+apiVersion: v1
+kind: Pod
+metadata:
+  name: startup-slow-app
+  labels:
+    app: startup-demo
+    scenario: slow-startup
+spec:
+  containers:
+  - name: slow-app
+    image: busybox
+    command:
+    - /bin/sh
+    - -c
+    - |
+      echo "應用程式啟動中，需要 60 秒..."
+      sleep 60
+      echo "應用程式已啟動！" > /tmp/started
+      echo "開始正常運行"
+      while true; do sleep 1; done
+    
+    # Startup Probe: 給予足夠的時間讓應用啟動
+    startupProbe:
+      exec:
+        command:
+        - cat
+        - /tmp/started
+      initialDelaySeconds: 10        # 首次檢查前等待時間
+      periodSeconds: 5               # 每 5 秒檢查一次
+      timeoutSeconds: 3              # 檢查超時時間
+      successThreshold: 1            # 成功 1 次即可
+      failureThreshold: 20           # 最多失敗 20 次（5秒 * 20 = 100秒）
+    
+    # Liveness Probe: 只有在 Startup 成功後才會啟動
+    livenessProbe:
+      exec:
+        command:
+        - cat
+        - /tmp/started
+      periodSeconds: 10
+      failureThreshold: 3
+
+---
+# 完整範例：Startup + Liveness + Readiness
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: startup-complete-demo
+  labels:
+    app: startup-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: startup-complete
+  template:
+    metadata:
+      labels:
+        app: startup-complete
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        
+        # 1. Startup Probe: 確保應用程式已啟動（優先級最高）
+        startupProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 0     # 立即開始檢查
+          periodSeconds: 2           # 每 2 秒檢查一次
+          timeoutSeconds: 1
+          successThreshold: 1
+          failureThreshold: 30       # 最多失敗 30 次（2秒 * 30 = 60秒）
+        
+        # 2. Liveness Probe: 檢查應用是否存活
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        # 3. Readiness Probe: 檢查是否準備好接收流量
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 2
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+
+---
+# Service for Complete Demo
+apiVersion: v1
+kind: Service
+metadata:
+  name: startup-complete-service
+spec:
+  type: ClusterIP
+  selector:
+    app: startup-complete
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# 實戰範例：模擬資料庫應用的啟動過程
+apiVersion: v1
+kind: Pod
+metadata:
+  name: startup-database-simulation
+  labels:
+    app: startup-demo
+    scenario: database
+spec:
+  containers:
+  - name: database
+    image: busybox
+    command:
+    - /bin/sh
+    - -c
+    - |
+      echo "[$(date)] 資料庫啟動中..."
+      
+      echo "[$(date)] 階段 1: 載入配置檔..."
+      sleep 15
+      
+      echo "[$(date)] 階段 2: 初始化儲存引擎..."
+      sleep 20
+      
+      echo "[$(date)] 階段 3: 恢復資料..."
+      sleep 25
+      
+      echo "[$(date)] 階段 4: 建立索引..."
+      sleep 15
+      
+      echo "READY" > /tmp/db-ready
+      echo "[$(date)] 資料庫已就緒，可以接受連接！"
+      
+      # 保持運行
+      while true; do
+        sleep 10
+      done
+    
+    # Startup Probe: 給予充足時間（最多 150 秒）
+    startupProbe:
+      exec:
+        command:
+        - sh
+        - -c
+        - test -f /tmp/db-ready
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      failureThreshold: 30     # 5秒 * 30 = 150秒
+    
+    # Liveness Probe: 檢查資料庫進程是否存活
+    livenessProbe:
+      exec:
+        command:
+        - sh
+        - -c
+        - test -f /tmp/db-ready
+      periodSeconds: 15
+      failureThreshold: 3
+    
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"

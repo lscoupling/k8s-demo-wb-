@@ -1,0 +1,161 @@
+# Readiness Probe（就緒探針）範例
+# 用於檢測容器是否準備好接收流量
+# 如果探測失敗，Pod 不會被加入 Service 的 Endpoints
+
+---
+# HTTP GET 方式的 Readiness Probe
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: readiness-http-deployment
+  labels:
+    app: readiness-demo
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: readiness-demo
+  template:
+    metadata:
+      labels:
+        app: readiness-demo
+        probe-type: http
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        
+        readinessProbe:
+          httpGet:
+            path: /          # 健康檢查路徑
+            port: 80
+            scheme: HTTP
+          initialDelaySeconds: 5   # 啟動後等待時間
+          periodSeconds: 3         # 檢查間隔
+          timeoutSeconds: 2        # 超時時間
+          successThreshold: 1      # 成功閾值
+          failureThreshold: 2      # 失敗閾值
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+
+---
+# Service for Readiness Demo
+apiVersion: v1
+kind: Service
+metadata:
+  name: readiness-service
+  labels:
+    app: readiness-demo
+spec:
+  type: ClusterIP
+  selector:
+    app: readiness-demo
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+
+---
+# 同時使用 Liveness 和 Readiness Probe
+apiVersion: v1
+kind: Pod
+metadata:
+  name: readiness-liveness-combo
+  labels:
+    app: readiness-demo
+    scenario: combo
+spec:
+  containers:
+  - name: webapp
+    image: nginx:alpine
+    ports:
+    - containerPort: 80
+    
+    # Liveness: 檢查容器是否存活
+    livenessProbe:
+      httpGet:
+        path: /
+        port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      failureThreshold: 3
+    
+    # Readiness: 檢查是否準備好接收流量
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 2
+
+---
+# 實戰範例：模擬應用程式暖機過程
+# 應用程式需要時間初始化，使用 Readiness 確保完全就緒後才接收流量
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: readiness-warmup-demo
+  labels:
+    app: warmup-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: warmup-demo
+  template:
+    metadata:
+      labels:
+        app: warmup-demo
+    spec:
+      containers:
+      - name: app
+        image: busybox
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "應用程式啟動中..."
+          echo "正在載入配置檔..."
+          sleep 10
+          echo "正在初始化資料庫連接..."
+          sleep 10
+          echo "正在暖機快取..."
+          sleep 10
+          echo "應用程式就緒！" > /tmp/ready
+          echo "開始提供服務..."
+          sleep 3600
+        
+        readinessProbe:
+          exec:
+            command:
+            - cat
+            - /tmp/ready
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+
+---
+# Service for Warmup Demo
+apiVersion: v1
+kind: Service
+metadata:
+  name: warmup-service
+  labels:
+    app: warmup-demo
+spec:
+  type: ClusterIP
+  selector:
+    app: warmup-demo
+  ports:
+  - port: 80
+    targetPort: 8080

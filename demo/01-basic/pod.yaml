@@ -1,0 +1,66 @@
+# 基本 Pod 範例
+# Pod 是 Kubernetes 中最小的部署單元
+# 通常不會直接創建 Pod，而是透過 Deployment 等控制器管理
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+  labels:
+    app: nginx
+    environment: demo
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.21
+    ports:
+    - containerPort: 80
+      name: http
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "250m"
+      limits:
+        memory: "128Mi"
+        cpu: "500m"
+
+---
+# 多容器 Pod 範例
+# 展示一個 Pod 內可以運行多個容器
+# 這些容器共享網路和儲存資源
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: multi-container-pod
+  labels:
+    app: multi-demo
+spec:
+  containers:
+  # 主應用容器
+  - name: app
+    image: nginx:1.21
+    ports:
+    - containerPort: 80
+    volumeMounts:
+    - name: shared-data
+      mountPath: /usr/share/nginx/html
+  
+  # Sidecar 容器：負責產生內容
+  - name: content-generator
+    image: busybox
+    command: ["/bin/sh"]
+    args:
+      - -c
+      - >
+        while true; do
+          echo "$(date) - Hello from K8S Demo!" > /data/index.html;
+          sleep 10;
+        done
+    volumeMounts:
+    - name: shared-data
+      mountPath: /data
+  
+  volumes:
+  - name: shared-data
+    emptyDir: {}

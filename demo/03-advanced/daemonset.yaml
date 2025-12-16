@@ -1,0 +1,186 @@
+# DaemonSet 範例
+# 確保每個（符合條件的）節點上都運行一個 Pod
+# 常用於節點級別的服務，如日誌收集、監控代理、網路插件等
+
+---
+# 基本 DaemonSet 範例
+# 在每個節點上運行日誌收集器
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd-daemonset
+  labels:
+    app: fluentd
+    component: logging
+spec:
+  selector:
+    matchLabels:
+      app: fluentd
+  
+  template:
+    metadata:
+      labels:
+        app: fluentd
+        component: logging
+    spec:
+      # 容忍節點的污點，確保可以在所有節點上運行
+      tolerations:
+      # 容忍 master 節點的 NoSchedule 污點
+      - key: node-role.kubernetes.io/master
+        effect: NoSchedule
+      # 容忍 control-plane 的污點（較新的 K8S 版本）
+      - key: node-role.kubernetes.io/control-plane
+        effect: NoSchedule
+      
+      containers:
+      - name: fluentd
+        image: fluent/fluentd:v1.14-1
+        env:
+        - name: FLUENT_UID
+          value: "0"
+        
+        resources:
+          limits:
+            memory: 200Mi
+            cpu: 100m
+          requests:
+            memory: 100Mi
+            cpu: 50m
+        
+        # 掛載宿主機的日誌目錄
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+      
+      # 掛載宿主機目錄
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+
+---
+# 節點監控 DaemonSet
+# 在每個節點上運行監控代理
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  labels:
+    app: node-exporter
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+        component: monitoring
+    spec:
+      # 使用宿主機網路
+      hostNetwork: true
+      hostPID: true
+      
+      containers:
+      - name: node-exporter
+        image: prom/node-exporter:latest
+        args:
+        - --path.procfs=/host/proc
+        - --path.sysfs=/host/sys
+        - --path.rootfs=/host/root
+        - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+        
+        ports:
+        - name: metrics
+          containerPort: 9100
+          protocol: TCP
+        
+        resources:
+          limits:
+            memory: 180Mi
+            cpu: 100m
+          requests:
+            memory: 100Mi
+            cpu: 50m
+        
+        volumeMounts:
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: sys
+          mountPath: /host/sys
+          readOnly: true
+        - name: root
+          mountPath: /host/root
+          readOnly: true
+      
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+      - name: sys
+        hostPath:
+          path: /sys
+      - name: root
+        hostPath:
+          path: /
+          type: Directory
+
+---
+# 使用節點選擇器的 DaemonSet
+# 只在特定節點上運行
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: gpu-driver-daemonset
+  labels:
+    app: gpu-driver
+spec:
+  selector:
+    matchLabels:
+      app: gpu-driver
+  
+  template:
+    metadata:
+      labels:
+        app: gpu-driver
+    spec:
+      # 節點選擇器：只在有 GPU 的節點上運行
+      nodeSelector:
+        accelerator: nvidia-gpu
+      
+      containers:
+      - name: nvidia-driver-installer
+        image: busybox
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Installing NVIDIA drivers..."
+          echo "Driver installation completed!"
+          sleep infinity
+        
+        securityContext:
+          privileged: true
+        
+        volumeMounts:
+        - name: dev
+          mountPath: /dev
+      
+      volumes:
+      - name: dev
+        hostPath:
+          path: /dev

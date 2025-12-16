@@ -1,0 +1,194 @@
+# Job 範例
+# 用於執行一次性任務
+# 任務完成後，Pod 會被保留以供查看日誌，但不會重新啟動
+
+---
+# 基本 Job 範例
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: simple-job
+  labels:
+    app: job-demo
+spec:
+  # 完成任務所需的成功 Pod 數量
+  completions: 1
+  
+  # 並行執行的 Pod 數量
+  parallelism: 1
+  
+  # 失敗重試次數
+  backoffLimit: 4
+  
+  # 任務超時時間（秒）
+  activeDeadlineSeconds: 300
+  
+  template:
+    metadata:
+      labels:
+        app: job-demo
+    spec:
+      # 重啟策略：Never 或 OnFailure
+      restartPolicy: Never
+      
+      containers:
+      - name: worker
+        image: busybox
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "任務開始執行..."
+          echo "執行時間: $(date)"
+          sleep 10
+          echo "任務執行完成！"
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+
+---
+# 並行任務 Job
+# 執行多個任務，每個任務處理一部分資料
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: parallel-job
+  labels:
+    app: job-demo
+    type: parallel
+spec:
+  # 總共需要完成 5 個任務
+  completions: 5
+  
+  # 同時運行 2 個 Pod
+  parallelism: 2
+  
+  backoffLimit: 3
+  
+  template:
+    metadata:
+      labels:
+        app: job-demo
+        type: parallel
+    spec:
+      restartPolicy: OnFailure
+      
+      containers:
+      - name: worker
+        image: busybox
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Worker $(hostname) 開始處理任務..."
+          TASK_ID=$((RANDOM % 1000))
+          echo "處理任務 ID: $TASK_ID"
+          sleep $((RANDOM % 20 + 10))
+          echo "任務 $TASK_ID 完成！"
+        
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+
+---
+# 資料處理 Job 範例
+# 模擬批次資料處理任務
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: data-processing-job
+  labels:
+    app: data-processor
+spec:
+  completions: 1
+  backoffLimit: 2
+  
+  # TTL 控制器：任務完成後自動清理（秒）
+  ttlSecondsAfterFinished: 300
+  
+  template:
+    metadata:
+      labels:
+        app: data-processor
+    spec:
+      restartPolicy: Never
+      
+      containers:
+      - name: processor
+        image: busybox
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "==================================="
+          echo "資料處理任務開始"
+          echo "==================================="
+          
+          echo "步驟 1: 連接到資料庫..."
+          sleep 3
+          
+          echo "步驟 2: 載入資料..."
+          sleep 5
+          
+          echo "步驟 3: 處理資料..."
+          for i in 1 2 3 4 5; do
+            echo "  處理批次 $i/5"
+            sleep 2
+          done
+          
+          echo "步驟 4: 儲存結果..."
+          sleep 3
+          
+          echo "步驟 5: 清理暫存資料..."
+          sleep 2
+          
+          echo "==================================="
+          echo "資料處理任務完成！"
+          echo "處理時間: $(date)"
+          echo "==================================="
+
+---
+# 工作佇列 Job 範例
+# 使用工作佇列模式，多個 Worker 從佇列中獲取任務
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: work-queue-job
+  labels:
+    app: work-queue
+spec:
+  # 不指定 completions，Worker 自行判斷何時完成
+  parallelism: 3
+  backoffLimit: 4
+  
+  template:
+    metadata:
+      labels:
+        app: work-queue
+    spec:
+      restartPolicy: OnFailure
+      
+      containers:
+      - name: worker
+        image: busybox
+        command:
+        - /bin/sh
+        - -c
+        - |
+          WORKER_ID=$(hostname | grep -o '[0-9]*$')
+          echo "Worker-$WORKER_ID 啟動"
+          
+          # 模擬從佇列中獲取任務
+          TASKS=5
+          for i in $(seq 1 $TASKS); do
+            echo "Worker-$WORKER_ID 處理任務 $i/$TASKS"
+            sleep $((RANDOM % 5 + 2))
+          done
+          
+          echo "Worker-$WORKER_ID 完成所有任務"
